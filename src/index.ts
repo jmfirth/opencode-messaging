@@ -63,6 +63,17 @@ interface ToolDraft {
 interface PluginContext {
   readonly options?: Record<string, unknown>
   readonly tool: { transform: (transform: (draft: ToolDraft) => void) => Promise<void> | void }
+  readonly permission: {
+    assert: (input: {
+      sessionID: string
+      agent?: string
+      source: { type: "tool"; messageID: string; id: string }
+      action: string
+      resources: string[]
+      save?: string[]
+      metadata?: Record<string, unknown>
+    }) => Promise<void>
+  }
   readonly session: {
     create: (input: Record<string, unknown>) => Promise<{ id?: string; data?: { id?: string } }>
     synthetic: (input: Record<string, unknown>) => Promise<unknown>
@@ -114,6 +125,29 @@ const running = (): Promise<Record<string, unknown>> =>
   api("/api/session/active")
     .then((body) => body.data ?? {})
     .catch(() => ({}))
+
+/** V2 permission checks must be asserted explicitly; tool options are not enough. */
+async function assertPermission(
+  ctx: PluginContext,
+  context: SenderContext,
+  action: "peer_read" | "peer_send",
+  resources: string[],
+  metadata: Record<string, unknown>,
+) {
+  await ctx.permission.assert({
+    sessionID: context.sessionID,
+    agent: context.agent,
+    source: {
+      type: "tool",
+      messageID: context.messageID ?? "",
+      id: context.id ?? context.messageID ?? "",
+    },
+    action,
+    resources,
+    save: resources,
+    metadata,
+  })
+}
 
 export default {
   id: "opencode-messaging",
@@ -192,6 +226,7 @@ export default {
           required: ["session"],
         },
         execute: async (input: { session: string; limit?: number }, context: SenderContext) => {
+          await assertPermission(ctx, context, "peer_read", [input.session], { tool: "peer_read" })
           if (input.session === context.sessionID)
             throw new Error("peer_read cannot target the current session; you already have its history")
 
@@ -255,6 +290,7 @@ export default {
           input: { to: string; message: string; delivery?: "queue" | "steer" },
           context: SenderContext,
         ) => {
+          await assertPermission(ctx, context, "peer_send", [input.to], { tool: "peer_send" })
           if (input.to === context.sessionID) throw new Error("peer_send cannot target the current session")
           if (!input.message?.trim()) throw new Error("peer_send requires a non-empty message")
 
@@ -318,6 +354,9 @@ export default {
           input: { message: string; to?: string[]; delivery?: "queue" | "steer" },
           context: SenderContext,
         ) => {
+          await assertPermission(ctx, context, "peer_send", input.to?.length ? input.to : ["*"], {
+            tool: "peer_broadcast",
+          })
           if (!input.message?.trim()) throw new Error("peer_broadcast requires a non-empty message")
 
           const delivery = input.delivery === "steer" ? "steer" : "queue"
@@ -399,6 +438,7 @@ export default {
           input: { directory: string; message: string; title?: string; agent?: string },
           context: SenderContext,
         ) => {
+          await assertPermission(ctx, context, "peer_send", [input.directory], { tool: "peer_spawn" })
           if (!policy(ctx).spawn) throw new Error("peer_spawn is disabled by configuration")
           if (!input.message?.trim()) throw new Error("peer_spawn requires a non-empty message")
           if (!isAbsolute(input.directory)) throw new Error("directory must be an absolute path")

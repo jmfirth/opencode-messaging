@@ -17,10 +17,12 @@ export interface SessionLike {
   readonly time?: { readonly updated?: number; readonly created?: number }
 }
 
-/** The per-call tool context: who is sending. */
+/** The per-call tool context: who is sending, and how to ask for permission. */
 export interface SenderContext {
   readonly sessionID: string
   readonly agent: string
+  readonly messageID?: string
+  readonly id?: string
 }
 
 /** Plugin options, as configured for opencode-messaging. */
